@@ -26,6 +26,7 @@ def simple_pg(
 ):
 
     seed, final_particle_seed = jax.random.split(seed) # Save this seed for later so that we can be consistent with scan version
+    _, seed = jax.random.split(seed)
     seed, init_seed = jax.random.split(seed)
     init_particle_seeds = jax.random.split(init_seed, M-1)
     particles_1_Mm1 = jax.vmap(initial_sample)(init_particle_seeds)
@@ -66,6 +67,7 @@ def simple_pg(
 
         logw = jax.vmap(lambda p: observations(t+1, p))(particles)
 
+    print("phist", particle_hist)
 
     # sample a single particle from its geneaology.
  

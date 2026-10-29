@@ -19,7 +19,7 @@ def make_conditional_filter_scan_step(
 
             transition_sample,          # t, x_{t}, seed -> x_{t+1} ~ p_t(x_{t+1} | x_t)
             transition_logp,            # t, x_t, x_t_1 -> log p_t(x_{t+1}) | x_t) - used only with use_pgas
-            observations,               # t, x_{t} -> log g(y_{0:T} | x_{t})
+            observations,               # t, x_{t} -> log g(y_{t} | x_{t})
             reference_path,             # x'_{0:T}
             use_pgas = False
         ):
@@ -64,6 +64,7 @@ def make_conditional_filter_scan_step(
 
         new_particles = jax.tree.map(lambda x, y: jnp.concatenate((x,y[None])) , new_particles_t_Mm1, next_ref_particle)
 
+
         # Calculate second-stage weights
 
 
@@ -106,20 +107,18 @@ def sample_particles(N_samples, seed, bpf_result):
     return sample
     
 # Simple sample from history.
-def sample_particle(final_seed, bpf_result):
-    T = bpf_result.ancestor_history.shape[0]
+def sample_particle(final_seed, cpf_result):
+    T = cpf_result.ancestor_history.shape[0]
 
-
-    I_T = jax.random.categorical(final_seed, bpf_result.logw_history[-1])
+    I_T = jax.random.categorical(final_seed, cpf_result.logw_history[-1])
 
     def trace(i, a):
         return (a[i], a[i])
 
-    _, path = jax.lax.scan(trace, I_T, bpf_result.ancestor_history, reverse=True)
+    _, path = jax.lax.scan(trace, I_T, cpf_result.ancestor_history, reverse=True)
     path = jnp.concatenate((path, I_T[None]))
 
-    sample = jax.tree.map(lambda u: u[jnp.arange(T+1), path], bpf_result.particle_history)
-
+    sample = jax.tree.map(lambda u: u[jnp.arange(T+1), path], cpf_result.particle_history)
     
     # Need to use tree_map as event_history can be a pytree.
     # sample_events = jax.tree_util.tree_map(lambda u: u[jnp.arange(T)[None,:], path[:,1:]], bpf_result.event_history)
@@ -186,6 +185,7 @@ def conditional_scan(
     ess_history = jnp.concatenate((ess[None], ess_history))/M
     ess_pre_history = ess_pre_history/M
 
+
     return CPFResult(particle_history=particle_history,
                      logw_history=logw_history,
                      ancestor_history=ancestor_history,
@@ -193,3 +193,33 @@ def conditional_scan(
                                      ess_pre_history=ess_pre_history),
                      )
 
+def revised_pg_no_pgas(
+        initial_sample,             # seed -> x_0 ~ p(x_{0})
+        transition_sample,          # t, x_{t}, seed -> x_{t+1} ~ p(x_{t+1} | x_t)
+        observations,               # t, x_{t} -> log g_t(y_{t} | x_{t})
+        reference_path,             # Path x'_{0:T}
+        T, 
+        M,                          # Number of particles
+        seed,                       # Base rng seed
+    ):
+
+    def dummy_transition_logp(t, xt, xtp1):
+        return 0.0
+    
+    seed, final_particle_seed = jax.random.split(seed)
+    seed, cpf_seed = jax.random.split(seed)
+
+    cpf_result = conditional_scan(          
+        initial_sample,          # seed -> x_0 ~ p_0(x_0)
+        transition_sample,       # t, x_{t}, seed -> x_{t+1} ~ p(x_{t+1} | x_t)
+        dummy_transition_logp,         # t, x_t, x_{t+1} -> log p(x_{t+1}) | x_t) - used only with use_pgas
+        observations,            # t, x_{t} -> log g(y_{t} | x_{t})          
+        reference_path,          # x'_{0:T}
+        T,                       # Number of transitions
+        M,                       # Number of particles
+        cpf_seed,                    # rng seed
+        use_pgas=False,
+        )
+
+
+    return sample_particle(final_particle_seed, cpf_result)
